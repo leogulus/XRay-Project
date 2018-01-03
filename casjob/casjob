@@ -1,0 +1,54 @@
+-- Search near BCG galaxies.
+--
+-- For each galaxy in the BCG data set (brightest cluster galaxy),
+-- in 160<right ascension<170, -25<declination<35 count the number of
+-- galaxies within 30" of it that have a photoz within 0.05
+-- of that galaxy.
+-- This query has a very complex WHERE clause.
+
+SELECT TOP 1000 G.objID, COUNT(N.NeighborObjID) AS pop
+FROM 	Galaxy AS G    					-- first gravitational lens candidate
+   JOIN	Neighbors AS N ON G.objID = N.objID     	-- precomputed list of neighbors
+   JOIN	Galaxy AS U ON U.objID = N.neighborObjID	-- a neighbor galaxy of G
+   JOIN	photoZ AS Gpz ON G.objID = Gpz.objID		-- photoZ of G.
+   JOIN	photoZ AS Npz ON U.objID = Npz.objID		-- neighbor photoZ
+WHERE
+    G.ra BETWEEN 160 AND 170
+    AND G.dec BETWEEN -5 AND 5
+    AND N.objID < N.neighborObjID 	-- 30 arcseconds of one another.
+    AND ABS(Gpz.Z - Npz.Z) < 0.05	-- restrict the photoZ differences
+    AND (G.flags & (dbo.fPhotoFlags('BINNED1') + dbo.fPhotoFlags('BINNED2') + dbo.fPhotoFlags('BINNED4'))) > 0
+	--and it is detected from at least one of the binned images
+
+  AND (G.flags & ( dbo.fPhotoFlags('BLENDED') + dbo.fPhotoFlags('NODEBLEND') + dbo.fPhotoFlags('CHILD'))) != dbo.fPhotoFlags('BLENDED')
+      --and, if it is blended, it is either a child or not deblended further ??
+  AND (G.flags & (dbo.fPhotoFlags('EDGE') + dbo.fPhotoFlags('SATURATED'))) = 0
+      -- and it is not near a ccd edge or saturated, where measurements may be bad
+   -- and apply color cut for a BCG courtesy of James Annis of Fermilab
+   AND G.petroMag_i > 17.5
+   AND (G.petroMag_r > 15.5 or G.petror50_r > 2)
+   AND (G.petroMag_r < 30 AND G.g < 30 AND G.r < 30 AND G.i < 30)
+   AND  (G.r < 19.2
+       AND ( 1=1 or					-- huh?
+             (G.r < (13.1 + (7/3)*(G.g - G.r) +
+	              -- deRed_r < 13.1 + 0.7 / 0.3 * deRed_gr
+               4 *(G.r - G.i - 0.18 ))
+	              -- 1.2 / 0.3 * deRed_ri
+         AND (( G.r - G.i - (G.g - G.r)/4 - 0.18) BETWEEN -0.2 AND  0.2 )
+	 AND ((G.r +
+                      -- petSB - deRed_r + 2.5 log10(2Pi*petror50^2)
+              2.5 * LOG( 2 * 3.1415 * G.petror50_r * G.petror50_r )) < 24.2 )
+         )
+        or
+         (      (G.r < 19.5 )
+         AND (( G.r - G.i -(G.g - G.r)/4 -.18) >
+                      -- - deRed_gr/4 - 0.18
+        	      -- cperp = deRed_ri
+                         (0.45 - 4*( G.g - G.r)))
+                      -- 0.45 - deRed_gr/0.25
+         AND ((G.g - G.r) > ( 1.35 + 0.25 *(G.r - G.i)))
+         AND ((G.r  +
+                      -- petSB - deRed_r + 2.5 log10(2Pi*petror50^2)
+                 2.5 * LOG( 2 * 3.1415 * G.petror50_r * G.petror50_r )) < 23.3 )
+        ))  )
+GROUP BY G.objID
